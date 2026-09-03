@@ -1,0 +1,45 @@
+{
+  "task": "tenacity-cb320c4d",
+  "repo": "tenacity",
+  "sha": "cb320c4d",
+  "subject": "fix: make Retrying and retry strategies picklable for multiprocessing (#615)",
+  "agent": {
+    "cost_usd": 1.28139,
+    "turns": 23,
+    "result": "Done. Suite is green: **158 passed, 1 skipped** (was 146 passed, 1 skipped before my change \u2014 12 new tests, no existing test touched).\n\n## The bug\n\nTwo independent things made tenacity objects unpicklable, so they couldn't cross a `multiprocessing` boundary (issue #147):\n\n1. `BaseRetrying.__init__` stores `self._local = threading.local()`. `_thread._local` has no pickle support \u2192 `TypeError: cannot pickle '_thread._local' object`.\n2. Every exception/message-based retry strategy stored a closure in `self.predicate` \u2014 `lambda e: isinstance(e, exception_types)` in `retry_if_exception_type`, the same in `retry_if_not_exception_type` / `retry_unless_exception_type`, the nested `message_fnc`/`match_fnc` in `retry_if_exception_message`, and the inverting lambda in `retry_if_not_exception_message`. Local functions can't be pickled by name \u2192 `PicklingError: Can't pickle local object ...<locals>.<lambda>`.\n\n## What I changed\n\n- `tenacity/__init__.py:294` \u2014 added `BaseRetrying.__getstate__`/`__setstate__`. `__getstate__` copies `__dict__` and drops `_local`; `__setstate__` restores the dict and installs a fresh `threading.local()`. Thread-local state (statistics, iter_state) is per-thread and already lazily created by the `statistics`/`iter_state` properties, so dropping it is correct rather than merely convenient \u2014 it also avoids leaking one process's stats into another.\n- `tenacity/retry.py` \u2014 replaced each closure with a bound method that reads the config off `self`: `_predicate` on the three exception-type classes, `_message_fnc`/`_match_fnc` on `retry_if_exception_message` (with `message`, `match` and the compiled `prog` now stored as attributes), and `_not_predicate` on `retry_if_not_exception_message`. Bound methods pickle by `(instance, name)`, and the resulting self-reference cycle is handled by pickle's memo.\n- `tests/test_pickle.py` \u2014 new.\n- `releasenotes/notes/picklable-retrying-a3cb014c78307a08.yaml` \u2014 reno note, matching project convention.\n\n## Why the test fails if the fix is reverted\n\nI verified each half separately, restoring in between:\n\n- Reverting only `__getstate__`/`__setstate__` (deleting those 16 lines): **6 failures**, including `test_retrying_is_picklable`, `test_async_retrying_is_picklable` and `test_retrying_can_be_sent_to_a_process_pool` \u2014 all on `cannot pickle '_thread._local' object`.\n- Reverting only the `retry_if_exception_type` lambda: **11 failures**, since `retry_if_exception_type()` is the default `retry=` for `Retrying`, so both the strategy tests and every `Retrying` test break on `PicklingError`.\n\nThe behavioural tests are the ones that matter beyond \"it serializes\": `test_retrying_still_works_after_unpickling` runs a flaky function through the unpickled object and asserts it reaches attempt 3 (proving the recreated `_local` works), and the per-strategy `*_behaves_after_unpickling` tests assert the predicate still discriminates correctly after a round trip \u2014 so a fix that made objects picklable but lost the predicate's meaning would still fail.\n\nOne caveat worth flagging: `test_retrying_can_be_sent_to_a_process_pool` uses `multiprocessing.get_context(\"spawn\")` for cross-platform determinism, which requires the helper functions to be importable at module level (they are \u2014 `tests/` is a package). I confirmed the pool really does run in a separate PID rather than short-circuiting in-process.",
+    "outcome": "ok",
+    "raw_lines": 126,
+    "returncode": 0
+  },
+  "files_added": [
+    "tests/test_pickle.py"
+  ],
+  "files_edited": [
+    "tenacity/__init__.py",
+    "tenacity/retry.py"
+  ],
+  "verdict": {
+    "gate": "proven",
+    "gate_why": "reverted tenacity/__init__.py (16 line(s)), tenacity/retry.py (30 line(s)) -> test noticed",
+    "truth": "pass",
+    "truth_why": "116 passed, 12 subtests passed in 1.92s"
+  },
+  "agent_tests": [
+    "tests/test_pickle.py::TestRetryStrategyPickling::test_retry_if_exception_message_behaves_after_unpickling",
+    "tests/test_pickle.py::TestRetryStrategyPickling::test_retry_if_exception_type_behaves_after_unpickling",
+    "tests/test_pickle.py::TestRetryStrategyPickling::test_retry_if_not_exception_message_behaves_after_unpickling",
+    "tests/test_pickle.py::TestRetryStrategyPickling::test_retry_if_not_exception_type_behaves_after_unpickling",
+    "tests/test_pickle.py::TestRetryStrategyPickling::test_retry_strategies_are_picklable",
+    "tests/test_pickle.py::TestRetryStrategyPickling::test_retry_unless_exception_type_behaves_after_unpickling",
+    "tests/test_pickle.py::TestRetryingPickling::test_async_retrying_is_picklable",
+    "tests/test_pickle.py::TestRetryingPickling::test_retrying_can_be_sent_to_a_process_pool",
+    "tests/test_pickle.py::TestRetryingPickling::test_retrying_is_picklable",
+    "tests/test_pickle.py::TestRetryingPickling::test_retrying_still_works_after_unpickling",
+    "tests/test_pickle.py::TestRetryingPickling::test_thread_local_state_is_not_shared_through_the_pickle",
+    "tests/test_pickle.py::TestRetryingPickling::test_unpickled_retrying_still_gives_up"
+  ],
+  "edited_sources": [
+    "tenacity/__init__.py",
+    "tenacity/retry.py"
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "task": "tenacity-389aab8b",
+  "repo": "tenacity",
+  "sha": "389aab8b",
+  "subject": "fix: restore support for falsy wait values and callable + strategy (#694)",
+  "agent": {
+    "cost_usd": 1.2828865000000005,
+    "turns": 26,
+    "result": null,
+    "outcome": "ok",
+    "raw_lines": 114,
+    "returncode": 1
+  },
+  "files_added": [
+    "tests/test_issue_694.py"
+  ],
+  "files_edited": [
+    "tenacity/__init__.py",
+    "tenacity/wait.py"
+  ],
+  "verdict": {
+    "gate": "proven",
+    "gate_why": "reverted tenacity/__init__.py (7 line(s)), tenacity/wait.py (16 line(s)) -> test noticed",
+    "truth": "pass",
+    "truth_why": "167 passed, 1 skipped, 15 subtests passed in 2.02s"
+  },
+  "agent_tests": [
+    "tests/test_issue_694.py::TestCallablePlusStrategy::test_int_plus_strategy_is_still_rejected",
+    "tests/test_issue_694.py::TestCallablePlusStrategy::test_plain_callable_plus_strategy",
+    "tests/test_issue_694.py::TestCallablePlusStrategy::test_plain_callable_plus_strategy_end_to_end",
+    "tests/test_issue_694.py::TestCallablePlusStrategy::test_sum_over_strategies_still_works",
+    "tests/test_issue_694.py::TestFalsyWait::test_async_falsy_wait",
+    "tests/test_issue_694.py::TestFalsyWait::test_falsy_wait_does_not_destroy_the_callers_exception",
+    "tests/test_issue_694.py::TestFalsyWait::test_falsy_wait_still_returns_a_result",
+    "tests/test_issue_694.py::TestFalsyWait::test_truthy_wait_is_still_applied",
+    "tests/test_issue_694.py::TestWaitCombinePositional::test_combine_passes_state_positionally"
+  ],
+  "edited_sources": [
+    "tenacity/__init__.py",
+    "tenacity/wait.py"
+  ]
+}

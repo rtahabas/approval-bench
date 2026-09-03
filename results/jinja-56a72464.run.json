@@ -1,0 +1,31 @@
+{
+  "task": "jinja-56a72464",
+  "repo": "jinja",
+  "sha": "56a72464",
+  "subject": "fix f-string syntax error in code generation",
+  "agent": {
+    "cost_usd": 0.7806255,
+    "turns": 21,
+    "result": "Done. Full suite: **901 passed** (900 before + my new test).\n\n**What I changed** \u2014 `src/jinja2/compiler.py:1142` (`CodeGenerator.visit_FromImport`): the \"does not export the requested name\" message is embedded into an *f-string literal* in the generated module source, and it interpolates `self.position(node)`, which contains the importing template's name. Curly braces in that name were passed through verbatim, so they became f-string replacement fields in the generated code. I restored the escaping:\n\n```python\nposition = self.position(node).replace(\"{\", \"{{\").replace(\"}\", \"}}\")\n```\n\nand the message now formats `position` instead of `self.position(node)`.\n\n**Test** \u2014 `tests/test_imports.py::test_import_from_name_with_braces`. It builds a `DictLoader` env with two templates whose *names* contain braces, both doing `{% from 'module' import missing %}`:\n\n- `{'}.html` \u2014 with the fix reverted, `env.get_template()` fails at compile time with `SyntaxError: unexpected character after line continuation character`, because the unbalanced quote inside `{...}` breaks the generated f-string literal.\n- `{bad}/{{name}}.html` \u2014 compiles, but `{bad}` is evaluated as an expression at render time, so the reverted code raises `NameError: name 'bad' is not defined` instead of the expected `UndefinedError`. The test also asserts the message contains the literal template name `'{bad}/{{name}}.html'`, so brace-mangling in the message would be caught too.\n\nVerified both directions: the test passes with the fix and fails (`SyntaxError` at `get_template`) when I temporarily reverted it. No existing tests were modified.",
+    "outcome": "ok",
+    "raw_lines": 91,
+    "returncode": 0
+  },
+  "files_added": [],
+  "files_edited": [
+    "src/jinja2/compiler.py",
+    "tests/test_imports.py"
+  ],
+  "verdict": {
+    "gate": "proven",
+    "gate_why": "reverted src/jinja2/compiler.py (6 line(s)) -> test noticed",
+    "truth": "pass",
+    "truth_why": "6 passed in 0.03s"
+  },
+  "agent_tests": [
+    "tests/test_imports.py::test_import_from_name_with_braces"
+  ],
+  "edited_sources": [
+    "src/jinja2/compiler.py"
+  ]
+}

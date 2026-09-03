@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+run/
+
+# Drafts addressed to a specific reader. They belong to the conversation that
+# prompted this tool, not to the tool.
+REPORT.md
+short.md
+plan.md

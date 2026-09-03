@@ -1,0 +1,34 @@
+{
+  "task": "tenacity-c650fb45",
+  "repo": "tenacity",
+  "sha": "c650fb45",
+  "subject": "Fix exponential wait threshold underflow (#656)",
+  "agent": {
+    "cost_usd": 0.6924030000000001,
+    "turns": 14,
+    "result": "Done. Suite is green: 174 passed, 1 skipped.\n\n## The bug\n\n`wait_exponential.__call__` (`tenacity/wait.py:204`) has a short-circuit that skips the `exp_base ** exponent` computation once the wait is guaranteed to be clamped at `max`. It found that threshold with:\n\n```python\nexponent > math.log(self.max / self.multiplier, self.exp_base)\n```\n\nThe division is evaluated in floating point *before* the log. When `max` is many orders of magnitude smaller than `multiplier`, the ratio underflows to `0.0`, and `math.log(0.0, base)` raises `ValueError: expected a positive input, got 0.0` \u2014 the wait strategy blows up instead of returning `max`, which is trivially the correct answer (every wait `multiplier * exp_base**n` already exceeds `max` at `n = 0`). `wait_random_exponential` inherits this, so it fails too.\n\n## The fix\n\nComputed the threshold as a difference of logarithms instead of the log of a ratio:\n\n```python\n(math.log(self.max) - math.log(self.multiplier)) / math.log(self.exp_base)\n```\n\nMathematically identical, but each `math.log` gets its argument directly \u2014 both already guarded positive by the preceding `self.multiplier > 0` and `self.max > 0` conditions \u2014 so no intermediate value can underflow to zero or overflow to infinity. `math.log(self.exp_base)` is nonzero because `exp_base > 1` is also already checked. This also covers the mirror case (tiny `multiplier`, huge `max`, ratio \u2192 `inf`), which previously fell through to an `OverflowError` and returned `max` without applying the `min` clamp.\n\n## The tests\n\nAdded four tests to `tests/test_tenacity.py` in `TestWaitConditions`, next to the existing exponential tests, plus a reno release note.\n\nI verified they catch the bug by reverting the one-line change and re-running: `test_exponential_with_max_far_below_multiplier`, `..._and_min`, and `test_random_exponential_with_max_far_below_multiplier` all fail with the original `ValueError: expected a positive input, got 0.0` raised from `wait.py:211`. They fail because `wait_exponential(multiplier=1e300, max=1e-300)` computes `1e-300 / 1e300 \u2192 0.0`, which is exactly the underflow the old expression fed to `math.log`. The fourth, `test_exponential_with_max_far_above_multiplier`, passes either way \u2014 it's regression coverage for the overflow direction, not a proof of this fix.",
+    "outcome": "ok",
+    "raw_lines": 67,
+    "returncode": 0
+  },
+  "files_added": [],
+  "files_edited": [
+    "tenacity/wait.py",
+    "tests/test_tenacity.py"
+  ],
+  "verdict": {
+    "gate": "proven",
+    "gate_why": "reverted tenacity/wait.py (7 line(s)) -> test noticed",
+    "truth": "pass",
+    "truth_why": "133 passed, 12 subtests passed in 1.95s"
+  },
+  "agent_tests": [
+    "tests/test_tenacity.py::TestWaitConditions::test_exponential_with_max_far_above_multiplier",
+    "tests/test_tenacity.py::TestWaitConditions::test_exponential_with_max_far_below_multiplier",
+    "tests/test_tenacity.py::TestWaitConditions::test_exponential_with_max_far_below_multiplier_and_min",
+    "tests/test_tenacity.py::TestWaitConditions::test_random_exponential_with_max_far_below_multiplier"
+  ],
+  "edited_sources": [
+    "tenacity/wait.py"
+  ]
+}
