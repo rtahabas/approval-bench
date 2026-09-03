@@ -94,13 +94,49 @@ def git(clone, *args):
     return done.stdout
 
 
-def later_commits(clone, since):
-    """Every commit after `since` with subject, body, files — one git call."""
+MERGE_SUBJECT = re.compile(r"^Merge pull request #(\d+)|\(#(\d+)\)\s*$")
+
+
+def prs_from_clone(commits):
+    """Merged PRs reconstructed from history alone, for when GitHub is out of reach.
+
+    A squash merge lands as one commit titled like the PR with "(#N)" on the
+    end; a merge commit says "Merge pull request #N". Either gives the number,
+    the merge sha and the date. What it cannot give is who approved — every PR
+    comes back with an empty review list and is judged as "merged, review
+    status unknown". The caller must say so in what it prints.
+    """
+    out = []
+    for c in commits:
+        m = MERGE_SUBJECT.search(c["subject"])
+        if not m:
+            continue
+        number = int(m.group(1) or m.group(2))
+        title = re.sub(r"\s*\(#\d+\)\s*$", "", c["subject"])
+        out.append({"number": number, "title": title, "mergedAt": c["date"],
+                    "reviewDecision": None, "author": {"login": "?"},
+                    "mergeCommit": {"oid": c["sha"]},
+                    "reviews": {"nodes": []},
+                    "files": {"nodes": [{"path": p} for p in c["files"]]},
+                    "closingIssuesReferences": {"nodes": []}})
+    return out
+
+
+def later_commits(clone, since, merges="exclude"):
+    """Every commit after `since` with subject, body, files — one git call.
+
+    `merges="exclude"` is right for the commits that might undo a PR: a merge
+    commit is bookkeeping, not a change. It is wrong for reconstructing the PR
+    list, where "Merge pull request #N" *is* the PR — with it excluded, one
+    repository showed 101 merged PRs where its log holds 255. Callers say which
+    they want.
+    """
     # Explicit delimiters, because a body can span lines: splitting on the
     # first newline put the second body line into the file list and lost it
     # from the text the revert markers are searched in.
     rec, unit, end = "\x1e", "\x1f", "\x1d"
-    raw = git(clone, "log", f"--since={since}", "--no-merges", "--name-only",
+    flag = {"exclude": ["--no-merges"], "only": ["--merges"], "all": []}[merges]
+    raw = git(clone, "log", f"--since={since}", *flag, "--name-only",
               f"--format={rec}%H{unit}%cI{unit}%s{unit}%b{end}")
     commits = []
     for block in raw.split(rec):
@@ -179,15 +215,22 @@ def main():
     ap.add_argument("--since", default="2024-01-01")
     ap.add_argument("--window-days", type=int, default=30)
     ap.add_argument("--json")
+    ap.add_argument("--no-github", action="store_true",
+                    help="reconstruct merged PRs from the clone; review status will be unknown")
     args = ap.parse_args()
     owner, name = args.repo.split("/")
 
-    prs = merged_prs(owner, name, args.since)
-    commits = later_commits(args.clone, args.since)
-    by_sha = {c["sha"]: c for c in commits}
-
-    approved = [p for p in prs if any(r["state"] == "APPROVED" for r in p["reviews"]["nodes"])]
-    self_merged = [p for p in prs if not p["reviews"]["nodes"]]
+    commits = later_commits(args.clone, args.since)            # candidates: no merges
+    if args.no_github:
+        prs = prs_from_clone(later_commits(args.clone, args.since, merges="all"))
+        # Without the review record every merged PR is a candidate. This is a
+        # weaker question — "did merged work get undone", not "did approved
+        # work" — and the output says which one it answered.
+        approved, self_merged = prs, []
+    else:
+        prs = merged_prs(owner, name, args.since)
+        approved = [p for p in prs if any(r["state"] == "APPROVED" for r in p["reviews"]["nodes"])]
+        self_merged = [p for p in prs if not p["reviews"]["nodes"]]
 
     findings = []
     for pr in approved:
@@ -196,15 +239,22 @@ def main():
     reverted = {f["pr"] for f in findings if f["kind"] == "reverted"}
     hotfixed = {f["pr"] for f in findings if f["kind"] == "hotfixed"} - reverted
 
-    print(f"{args.repo}  since {args.since}  window {args.window_days}d\n")
+    print(f"{args.repo}  since {args.since}  window {args.window_days}d"
+          + ("   [clone only — review status unknown]" if args.no_github else "") + "\n")
     print(f"merged PRs                 {len(prs)}")
-    print(f"  with an APPROVED review  {len(approved)}")
-    print(f"  merged with no review    {len(self_merged)}   (maintainer self-merge; not judged)")
+    if args.no_github:
+        print(f"  review status            unknown for all {len(prs)} (no API access; "
+              f"judged as merged, not as approved)")
+        label = "merged"
+    else:
+        print(f"  with an APPROVED review  {len(approved)}")
+        print(f"  merged with no review    {len(self_merged)}   (maintainer self-merge; not judged)")
+        label = "approved"
     print()
     if not approved:
-        print("no approved PRs in range — nothing to measure here")
+        print(f"no {label} PRs in range — nothing to measure here")
         return 0
-    print(f"of {len(approved)} approved PRs:")
+    print(f"of {len(approved)} {label} PRs:")
     print(f"  reverted within window   {len(reverted):>3}   ({100*len(reverted)/len(approved):.1f}%)")
     print(f"  hotfixed within window   {len(hotfixed):>3}   ({100*len(hotfixed)/len(approved):.1f}%)  "
           f"weaker signal, kept separate")

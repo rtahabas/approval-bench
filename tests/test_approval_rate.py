@@ -117,5 +117,61 @@ class RevertDetection(unittest.TestCase):
                          ["reverted"])
 
 
+class MergeCommitsInHistory(unittest.TestCase):
+    """PR reconstruction must see real merge commits; candidate scanning must not.
+
+    With --no-merges applied to both, one repository reported 101 merged PRs
+    where its log held 255 — the other 154 were "Merge pull request #N" commits.
+    """
+
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+        git(self.repo, "init", "-q", "-b", "main")
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "t")
+        (pathlib.Path(self.repo) / "a.py").write_text("a = 1\n")
+        git(self.repo, "add", "."); git(self.repo, "commit", "-q", "-m", "base")
+        git(self.repo, "checkout", "-q", "-b", "feature")
+        (pathlib.Path(self.repo) / "b.py").write_text("b = 1\n")
+        git(self.repo, "add", "."); git(self.repo, "commit", "-q", "-m", "add b")
+        git(self.repo, "checkout", "-q", "main")
+        git(self.repo, "merge", "--no-ff", "-q", "-m", "Merge pull request #9 from t/feature", "feature")
+
+    def test_all_includes_the_merge_commit_and_exclude_drops_it(self):
+        everything = approval_rate.later_commits(self.repo, "2000-01-01", merges="all")
+        no_merges = approval_rate.later_commits(self.repo, "2000-01-01")
+        self.assertTrue(any(c["subject"].startswith("Merge pull request #9") for c in everything))
+        self.assertFalse(any(c["subject"].startswith("Merge pull request") for c in no_merges))
+
+    def test_the_merged_pr_is_reconstructed_from_the_merge_commit(self):
+        prs = approval_rate.prs_from_clone(
+            approval_rate.later_commits(self.repo, "2000-01-01", merges="all"))
+        self.assertEqual([p["number"] for p in prs], [9])
+
+
+class CloneOnlyPRs(unittest.TestCase):
+    """When GitHub is unreachable, merged PRs are read off the commit subjects."""
+
+    def commit(self, subject, files=("mod.py",)):
+        return {"sha": "abc", "date": "2026-01-01T00:00:00+00:00", "subject": subject,
+                "body": "", "files": set(files)}
+
+    def test_a_squash_merge_subject_yields_the_pr_number_and_title(self):
+        prs = approval_rate.prs_from_clone([self.commit("Fix the thing (#42)")])
+        self.assertEqual([(p["number"], p["title"]) for p in prs], [(42, "Fix the thing")])
+
+    def test_a_merge_commit_subject_yields_the_pr_number(self):
+        prs = approval_rate.prs_from_clone([self.commit("Merge pull request #7 from x/y")])
+        self.assertEqual([p["number"] for p in prs], [7])
+
+    def test_a_plain_commit_is_not_a_pr(self):
+        self.assertEqual(approval_rate.prs_from_clone([self.commit("Tidy imports")]), [])
+
+    def test_review_status_is_reported_as_unknown_not_approved(self):
+        pr = approval_rate.prs_from_clone([self.commit("Fix (#1)")])[0]
+        self.assertEqual(pr["reviews"]["nodes"], [])
+        self.assertIsNone(pr["reviewDecision"])
+
+
 if __name__ == "__main__":
     unittest.main()
