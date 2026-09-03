@@ -84,5 +84,6 @@ fine and mean nothing.
 | `run_task.py` | hands the task to the agent, records cost and turns |
 | `judge.py` | the gate and the truth readings |
 | `report.py` | the table |
+| `approval_rate.py` | the other side of the question: how often a *human* approval let a bad change through — approved-and-merged PRs that were reverted or hot-fixed within a window, read from GitHub reviews plus the clone's history. Every hit is printed with its commit; a revert is a proxy, not proof |
 | `results/` | the nine runs behind the table in this README — real output, kept so the numbers can be checked rather than taken |
 | `tests/` | 22 tests, each one a bug this harness shipped and had to have caught by hand |
