@@ -31,7 +31,7 @@ import sys
 QUERY = """
 query($owner:String!, $name:String!, $cursor:String) {
   repository(owner:$owner, name:$name) {
-    pullRequests(states:MERGED, first:100, after:$cursor,
+    pullRequests(states:MERGED, first:PAGE_SIZE, after:$cursor,
                  orderBy:{field:UPDATED_AT, direction:DESC}) {
       pageInfo { hasNextPage endCursor }
       nodes {
@@ -59,7 +59,10 @@ def gh_graphql(query, **variables):
     return json.loads(done.stdout)
 
 
-def merged_prs(owner, name, since, max_pages=30):
+PR_BUDGET = 3000
+
+
+def merged_prs(owner, name, since, page_size=100):
     """Merged PRs newer than `since`, with their review record.
 
     The list is ordered by UPDATED_AT, which is not mergedAt: an old PR that
@@ -68,11 +71,18 @@ def merged_prs(owner, name, since, max_pages=30):
     repository that has hundreds — a silent truncation that reads as a small
     project. So: filter every row, and stop only when a whole page is older
     than the cut-off or the page budget runs out.
+
+    A page costs page_size x (files + reviews) nodes. On a repository the size
+    of langchain the server abandons the request at 100 — HTTP 502, then a
+    cancelled stream. Asking for fewer rows per page is the fix; the page
+    budget grows to match so the number of PRs reached stays the same.
     """
+    max_pages = -(-PR_BUDGET // page_size)
+    query = QUERY.replace("PAGE_SIZE", str(page_size))
     out, cursor, pages = [], None, 0
     while pages < max_pages:
         pages += 1
-        data = gh_graphql(QUERY, owner=owner, name=name, cursor=cursor)
+        data = gh_graphql(query, owner=owner, name=name, cursor=cursor)
         block = data["data"]["repository"]["pullRequests"]
         rows = block["nodes"]
         out += [pr for pr in rows if pr["mergedAt"] >= since]
@@ -214,6 +224,9 @@ def main():
     ap.add_argument("clone", help="local clone with full history")
     ap.add_argument("--since", default="2024-01-01")
     ap.add_argument("--window-days", type=int, default=30)
+    ap.add_argument("--page-size", type=int, default=100,
+                    help="PRs per API page; lower it when the server abandons "
+                         "the request on a large repository (default 100)")
     ap.add_argument("--json")
     ap.add_argument("--no-github", action="store_true",
                     help="reconstruct merged PRs from the clone; review status will be unknown")
@@ -228,7 +241,7 @@ def main():
         # work" — and the output says which one it answered.
         approved, self_merged = prs, []
     else:
-        prs = merged_prs(owner, name, args.since)
+        prs = merged_prs(owner, name, args.since, page_size=args.page_size)
         approved = [p for p in prs if any(r["state"] == "APPROVED" for r in p["reviews"]["nodes"])]
         self_merged = [p for p in prs if not p["reviews"]["nodes"]]
 
@@ -260,8 +273,18 @@ def main():
           f"weaker signal, kept separate")
     if findings:
         print("\nevidence — read these, do not take them:")
-        for f in sorted(findings, key=lambda f: f["pr"]):
-            print(f"  PR #{f['pr']:<5} merged {f['merged']}  {f['kind']:<8} {f['sha']}  {f['subject']}")
+        # One merge can be undone by many commits: a monorepo reverts a
+        # dependency bump once per package, and langchain printed the same PR
+        # eighteen times, which reads as eighteen bad merges. The counts above
+        # were always of PRs, not commits; the list now says the same thing.
+        by_pr = {}
+        for f in sorted(findings, key=lambda f: (f["pr"], f["sha"])):
+            by_pr.setdefault((f["pr"], f["kind"]), []).append(f)
+        for (pr, kind), group in sorted(by_pr.items()):
+            first, extra = group[0], len(group) - 1
+            more = f"  (+{extra} more commit{'s' if extra > 1 else ''})" if extra else ""
+            print(f"  PR #{pr:<5} merged {first['merged']}  {kind:<8} {first['sha']}  "
+                  f"{first['subject']}{more}")
     print(f"\nn={len(approved)} approved PRs; a revert is a proxy for a wrong merge, "
           f"not proof of one.")
     if args.json:
